@@ -159,11 +159,12 @@ def create_trend_chart(df, metrics, title):
         if metric in df.columns:
             fig.add_trace(go.Scatter(
                 x=df['Quarter'],
-                y=df[metric],
+                y=df[metric].round(2),  # Round values to 2 decimal places
                 mode='lines+markers',
                 name=metric.replace('_', ' ').title(),
                 line=dict(color=colors[i % len(colors)], width=3),
-                marker=dict(size=8)
+                marker=dict(size=8),
+                hovertemplate='%{y:.2f}<extra></extra>'  # Format hover to 2 decimal places
             ))
     
     fig.update_layout(
@@ -222,7 +223,7 @@ def main():
         
         if quarterly_data:
             # Sidebar filters
-            st.sidebar.header("🔍 Filters")
+            st.sidebar.header("Filters")
             
             # Get all submitters
             all_submitters = set()
@@ -260,7 +261,7 @@ def main():
             )
             
             # Create tabs
-            tab1, tab2, tab3, tab4 = st.tabs(["📈 Aggregate Trends", "👥 Submitter Analysis", "📋 Detailed Data", "📊 Monthly Breakdown"])
+            tab1, tab2, tab3, tab4 = st.tabs(["Aggregate Trends", "Submitter Analysis", "Detailed Data", "Monthly Breakdown"])
             
             with tab1:
                 st.header("Aggregate Trends Analysis")
@@ -276,19 +277,19 @@ def main():
                 
                 with col1:
                     total_pieces = agg_summary_filtered['Pieces'].sum()
-                    st.metric("Total Pieces", f"{total_pieces:,}")
+                    st.metric("Total Pieces", f"{total_pieces:,.2f}")
                 
                 with col2:
                     total_pages = agg_summary_filtered['Pages'].sum()
-                    st.metric("Total Pages", f"{total_pages:,}")
+                    st.metric("Total Pages", f"{total_pages:,.2f}")
                 
                 with col3:
                     total_videos = agg_summary_filtered['Videos'].sum()
-                    st.metric("Total Videos", f"{total_videos:,}")
+                    st.metric("Total Videos", f"{total_videos:,.2f}")
                 
                 with col4:
                     total_touches = agg_summary_filtered['Extra_Touches'].sum()
-                    st.metric("Total Extra Touches", f"{total_touches:,}")
+                    st.metric("Total Extra Touches", f"{total_touches:,.2f}")
                 
                 # Trend charts
                 if selected_metrics:
@@ -322,7 +323,9 @@ def main():
                 
                 # Summary table
                 st.subheader("Quarterly Summary Table")
-                st.dataframe(agg_summary_filtered, use_container_width=True)
+                # Round the dataframe to 2 decimal places for display
+                agg_summary_display = agg_summary_filtered.round(2)
+                st.dataframe(agg_summary_display, use_container_width=True)
             
             with tab2:
                 st.header("Submitter Analysis")
