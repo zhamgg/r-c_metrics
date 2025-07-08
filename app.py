@@ -55,8 +55,11 @@ def load_data(file_path):
                 df = pd.read_excel(file_path, sheet_name=sheet)
                 # Clean column names
                 df.columns = df.columns.str.strip()
-                # Remove empty rows
-                df = df.dropna(subset=[df.columns[0]])
+                # Remove completely empty rows
+                df = df.dropna(how='all')
+                # Remove rows where the first column (content name) is empty
+                if len(df.columns) > 0:
+                    df = df.dropna(subset=[df.columns[0]])
                 # Add quarter column
                 df['Quarter'] = sheet
                 quarterly_data[sheet] = df
@@ -67,7 +70,9 @@ def load_data(file_path):
             if sheet in excel_file.sheet_names:
                 df = pd.read_excel(file_path, sheet_name=sheet)
                 df.columns = df.columns.str.strip()
-                df = df.dropna(subset=[df.columns[0]])
+                df = df.dropna(how='all')
+                if len(df.columns) > 0:
+                    df = df.dropna(subset=[df.columns[0]])
                 df['Month'] = sheet
                 monthly_data[sheet] = df
         
@@ -105,6 +110,13 @@ def standardize_columns(df, quarter):
     for col in standard_columns:
         if col not in df_renamed.columns:
             df_renamed[col] = 0
+    
+    # Clean submitter column - handle NaN and convert to string
+    if 'Submitter' in df_renamed.columns:
+        df_renamed['Submitter'] = df_renamed['Submitter'].fillna('Unknown').astype(str)
+        df_renamed['Submitter'] = df_renamed['Submitter'].str.strip()
+        # Replace empty strings with 'Unknown'
+        df_renamed['Submitter'] = df_renamed['Submitter'].replace('', 'Unknown')
     
     # Convert numeric columns
     numeric_columns = ['Pieces', 'Pages', 'Videos', 'Video_Length_Minutes', 
@@ -216,7 +228,11 @@ def main():
             all_submitters = set()
             for df in quarterly_data.values():
                 df_std = standardize_columns(df, "")
-                all_submitters.update(df_std['Submitter'].unique())
+                # Filter out NaN values and convert to string
+                valid_submitters = df_std['Submitter'].dropna().astype(str).unique()
+                # Remove empty strings and 'nan' strings
+                valid_submitters = [s for s in valid_submitters if s.strip() and s.lower() != 'nan']
+                all_submitters.update(valid_submitters)
             all_submitters = sorted(list(all_submitters))
             
             # Submitter filter
