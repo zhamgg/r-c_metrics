@@ -5,13 +5,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 from datetime import datetime, timedelta
-import warnings
+import re
 
-warnings.filterwarnings('ignore')
-
-# Page configuration
+# Set page config
 st.set_page_config(
-    page_title="Marketing Compliance Dashboard",
+    page_title="Compliance Marketing Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -20,604 +18,492 @@ st.set_page_config(
 # Custom CSS for better styling
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
+    .main > div {
+        padding-top: 2rem;
     }
-    .metric-card {
+    .stMetric {
         background-color: #f0f2f6;
+        border: 1px solid #e0e0e0;
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 0.5rem 0;
     }
-    .stSelectbox label {
-        font-weight: bold;
+    .metric-container {
+        display: flex;
+        justify-content: space-around;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 @st.cache_data
-def load_data():
-    """Load and process data from local Excel file"""
+def load_and_clean_data():
+    """Load and clean the Excel data"""
     try:
-        file_path = "compliance_marketing_master.xlsx"
+        # Load all sheets
+        third_party = pd.read_excel('compliance_marketing_master.xlsx', sheet_name='3rd Party Marketing')
+        corporate = pd.read_excel('compliance_marketing_master.xlsx', sheet_name='Corporate Marketing')
+        rfi = pd.read_excel('compliance_marketing_master.xlsx', sheet_name='RFI')
 
-        # Read both sheets
-        third_party_df = pd.read_excel(file_path, sheet_name='3rd Party Marketing')
-        corporate_df = pd.read_excel(file_path, sheet_name='Corporate Marketing')
+        # Validate minimum required columns
+        if len(third_party.columns) < 5:
+            raise ValueError(f"3rd Party Marketing sheet has {len(third_party.columns)} columns, expected at least 5")
+        if len(corporate.columns) < 4:
+            raise ValueError(f"Corporate Marketing sheet has {len(corporate.columns)} columns, expected at least 4")
+        if len(rfi.columns) < 6:
+            raise ValueError(f"RFI sheet has {len(rfi.columns)} columns, expected at least 6")
 
-        # Clean column names
-        third_party_df.columns = third_party_df.columns.str.strip()
-        corporate_df.columns = corporate_df.columns.str.strip()
+        # Debug: Print actual column information (remove these lines once working)
+        # st.write("Debug - 3rd Party columns:", list(third_party.columns), f"Count: {len(third_party.columns)}")
+        # st.write("Debug - Corporate columns:", list(corporate.columns), f"Count: {len(corporate.columns)}")
+        # st.write("Debug - RFI columns:", list(rfi.columns), f"Count: {len(rfi.columns)}")
 
-        # Remove empty rows
-        third_party_df = third_party_df.dropna(how='all')
-        corporate_df = corporate_df.dropna(how='all')
+        # Data cleaning function
+        def clean_text(text):
+            if pd.isna(text) or text == '':
+                return text
+            text = str(text).strip()
+            # Fix common typos
+            typo_fixes = {
+                'Presnetation': 'Presentation',
+                'Presntation': 'Presentation',
+                'Product Sheey': 'Product Sheet',
+                'Exisiting': 'Existing',
+                'Fact Sheet': 'Factsheet'
+            }
+            return typo_fixes.get(text, text)
 
-        # Add marketing type identifier
-        third_party_df['Marketing_Type'] = '3rd Party'
-        corporate_df['Marketing_Type'] = 'Corporate'
+        # Clean 3rd Party Marketing data - handle variable column count
+        if len(third_party.columns) >= 5:
+            third_party.columns = ['Project_Name', 'Document_Type', 'Company', 'Date_Received', 'Pages_Minutes'] + [
+                f'Extra_{i}' for i in range(len(third_party.columns) - 5)]
+        third_party['Document_Type'] = third_party['Document_Type'].apply(clean_text)
+        third_party['Company'] = third_party['Company'].apply(clean_text)
+        third_party['Date_Received'] = pd.to_datetime(third_party['Date_Received'], errors='coerce')
 
-        return third_party_df, corporate_df
+        # Separate pages and minutes for 3rd party
+        def extract_pages_minutes(row):
+            doc_type = str(row['Document_Type']).lower()
+            value = row['Pages_Minutes']
+
+            if pd.isna(value) or value == '':
+                return pd.Series([np.nan, np.nan])
+
+            # Convert to numeric, handling any errors
+            try:
+                value = float(value)
+                # Filter out obvious errors (negative numbers, extremely large numbers)
+                if value < 0 or value > 10000:
+                    return pd.Series([np.nan, np.nan])
+            except:
+                return pd.Series([np.nan, np.nan])
+
+            # Determine if it's minutes or pages based on document type
+            if 'video' in doc_type or 'audio' in doc_type:
+                return pd.Series([np.nan, value])  # [Pages, Minutes]
+            else:
+                return pd.Series([value, np.nan])  # [Pages, Minutes]
+
+        third_party[['Pages', 'Minutes']] = third_party.apply(extract_pages_minutes, axis=1)
+        third_party['Area'] = '3rd Party Marketing'
+        third_party['Subadvisor'] = third_party['Company']  # Treat company as subadvisor
+
+        # Clean Corporate Marketing data - handle variable column count
+        if len(corporate.columns) >= 4:
+            new_cols = ['Project_Name', 'Document_Type', 'Pages', 'Date_Received'] + [f'Extra_{i}' for i in
+                                                                                      range(len(corporate.columns) - 4)]
+            corporate.columns = new_cols
+        corporate['Document_Type'] = corporate['Document_Type'].apply(clean_text)
+        corporate['Date_Received'] = pd.to_datetime(corporate['Date_Received'], errors='coerce')
+        corporate['Pages'] = pd.to_numeric(corporate['Pages'], errors='coerce')
+        corporate['Minutes'] = np.nan  # No minutes data for corporate
+        corporate['Area'] = 'Corporate Marketing'
+        # Drop any extra columns
+        extra_cols = [col for col in corporate.columns if col.startswith('Extra_')]
+        if extra_cols:
+            corporate = corporate.drop(extra_cols, axis=1)
+
+        # Clean RFI data - handle variable column count
+        if len(rfi.columns) >= 6:
+            new_cols = ['Project_Name', 'Document_Type', 'Current_Relationship', 'Services_Seeking', 'Pages',
+                        'Date_Received'] + [f'Extra_{i}' for i in range(len(rfi.columns) - 6)]
+            rfi.columns = new_cols
+        rfi['Document_Type'] = rfi['Document_Type'].apply(clean_text)
+        rfi['Current_Relationship'] = rfi['Current_Relationship'].apply(clean_text)
+        rfi['Services_Seeking'] = rfi['Services_Seeking'].apply(clean_text)
+        rfi['Date_Received'] = pd.to_datetime(rfi['Date_Received'], errors='coerce')
+        rfi['Pages'] = pd.to_numeric(rfi['Pages'], errors='coerce')
+        rfi['Minutes'] = np.nan  # No minutes data for RFI
+        rfi['Area'] = 'RFI'
+        # Drop any extra columns
+        extra_cols = [col for col in rfi.columns if col.startswith('Extra_')]
+        if extra_cols:
+            rfi = rfi.drop(extra_cols, axis=1)
+
+        # Add time-based columns to all datasets
+        for df in [third_party, corporate, rfi]:
+            df['Year'] = df['Date_Received'].dt.year
+            df['Month'] = df['Date_Received'].dt.month
+            df['Quarter'] = df['Date_Received'].dt.quarter
+            df['Year_Quarter'] = df['Year'].astype(str) + '-Q' + df['Quarter'].astype(str)
+            df['Year_Month'] = df['Date_Received'].dt.strftime('%Y-%m')
+
+        return third_party, corporate, rfi
 
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
-        st.error("Make sure 'compliance_marketing_master.xlsx' is in the same directory as app.py")
-        return pd.DataFrame(), pd.DataFrame()
 
-
-def convert_excel_date(date_val):
-    """Convert Excel date serial number to datetime"""
-    if pd.isna(date_val) or date_val == '':
-        return None
-    if isinstance(date_val, (int, float)):
+        # Try to provide more helpful error information
         try:
-            # Excel date serial number to datetime
-            return pd.to_datetime('1899-12-30') + pd.to_timedelta(date_val, 'D')
-        except:
-            return None
-    return pd.to_datetime(date_val, errors='coerce')
+            third_party_test = pd.read_excel('compliance_marketing_master.xlsx', sheet_name='3rd Party Marketing',
+                                             nrows=0)
+            corporate_test = pd.read_excel('compliance_marketing_master.xlsx', sheet_name='Corporate Marketing',
+                                           nrows=0)
+            rfi_test = pd.read_excel('compliance_marketing_master.xlsx', sheet_name='RFI', nrows=0)
+
+            st.write("**Debugging Information:**")
+            st.write(f"3rd Party Marketing columns ({len(third_party_test.columns)}): {list(third_party_test.columns)}")
+            st.write(f"Corporate Marketing columns ({len(corporate_test.columns)}): {list(corporate_test.columns)}")
+            st.write(f"RFI columns ({len(rfi_test.columns)}): {list(rfi_test.columns)}")
+        except Exception as debug_error:
+            st.write(f"Could not load file for debugging: {debug_error}")
+
+        return None, None, None
 
 
-def get_quarter(date):
-    """Extract quarter from date"""
-    if pd.isna(date):
-        return 'Unknown'
-    quarter = f"Q{((date.month - 1) // 3) + 1}"
-    return f"{quarter} {date.year}"
+def create_summary_metrics(data, area_name):
+    """Create summary metrics for an area"""
+    total_submissions = len(data)
+    total_pages = data['Pages'].sum() if 'Pages' in data.columns else 0
+    total_minutes = data['Minutes'].sum() if 'Minutes' in data.columns else 0
+
+    # Handle NaN values
+    total_pages = 0 if pd.isna(total_pages) else int(total_pages)
+    total_minutes = 0 if pd.isna(total_minutes) else int(total_minutes)
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("Submissions", f"{total_submissions:,}")
+    with col2:
+        st.metric("Pages", f"{total_pages:,}")
+    with col3:
+        st.metric("Minutes", f"{total_minutes:,}")
+    with col4:
+        # Calculate average pages per submission (excluding NaN)
+        avg_pages = data['Pages'].mean()
+        avg_pages = 0 if pd.isna(avg_pages) else avg_pages
+        st.metric("Avg Pages", f"{avg_pages:.1f}")
 
 
-def process_data(third_party_df, corporate_df):
-    """Process and standardize both datasets"""
+def create_submission_timeline(data, title):
+    """Create a timeline chart of submissions"""
+    if data.empty:
+        st.write("No data available for timeline")
+        return
 
-    # Process 3rd Party data
-    if not third_party_df.empty:
-        third_party_processed = third_party_df.copy()
-        third_party_processed['Date_Received'] = third_party_processed['Date Received'].apply(convert_excel_date)
-        third_party_processed['Quarter'] = third_party_processed['Date_Received'].apply(get_quarter)
-        third_party_processed['Pages_Minutes'] = pd.to_numeric(
-            third_party_processed['# of pages / # of minutes for videos'],
-            errors='coerce'
-        ).fillna(0)
-        third_party_processed['Document_Type'] = third_party_processed['Document Type'].fillna('Unknown')
-        third_party_processed['Project_Name'] = third_party_processed['Project Name'].fillna('Unknown')
-    else:
-        third_party_processed = pd.DataFrame()
+    # Group by month
+    monthly_data = data.groupby('Year_Month').size().reset_index(name='Submissions')
+    monthly_data['Date'] = pd.to_datetime(monthly_data['Year_Month'])
 
-    # Process Corporate data
-    if not corporate_df.empty:
-        corporate_processed = corporate_df.copy()
-        corporate_processed['Date_Received'] = corporate_processed['Date Received'].apply(convert_excel_date)
-        corporate_processed['Date_Sent_Compliance'] = corporate_processed['Date Sent To Compliance'].apply(
-            convert_excel_date)
-
-        corporate_processed['Quarter'] = corporate_processed['Date_Received'].apply(get_quarter)
-        corporate_processed['Pages'] = pd.to_numeric(corporate_processed['# of Pages'], errors='coerce').fillna(0)
-        corporate_processed['Document_Type'] = corporate_processed['Document Type'].fillna('Unknown')
-        corporate_processed['Project_Name'] = corporate_processed['Project Name'].fillna('Unknown')
-
-        # Calculate workflow metrics (simplified to 2-stage process)
-        corporate_processed['Days_To_Compliance'] = (
-                corporate_processed['Date_Sent_Compliance'] - corporate_processed['Date_Received']
-        ).dt.days
-    else:
-        corporate_processed = pd.DataFrame()
-
-    return third_party_processed, corporate_processed
-
-
-def create_quarterly_summary(third_party_df, corporate_df):
-    """Create quarterly aggregated metrics"""
-    summaries = []
-
-    # 3rd Party quarterly summary
-    if not third_party_df.empty:
-        tp_summary = third_party_df.groupby('Quarter').agg({
-            'Project_Name': 'count',
-            'Pages_Minutes': 'sum',
-            'Document_Type': lambda x: x.nunique()
-        }).round(2)
-        tp_summary.columns = ['Projects', 'Total_Pages_Minutes', 'Unique_Doc_Types']
-        tp_summary['Marketing_Type'] = '3rd Party'
-        tp_summary['Quarter'] = tp_summary.index
-        summaries.append(tp_summary.reset_index(drop=True))
-
-    # Corporate quarterly summary
-    if not corporate_df.empty:
-        corp_summary = corporate_df.groupby('Quarter').agg({
-            'Project_Name': 'count',
-            'Pages': 'sum',
-            'Document_Type': lambda x: x.nunique(),
-            'Days_To_Compliance': 'mean'
-        }).round(2)
-        corp_summary.columns = ['Projects', 'Total_Pages', 'Unique_Doc_Types', 'Avg_Days_To_Compliance']
-        corp_summary['Marketing_Type'] = 'Corporate'
-        corp_summary['Quarter'] = corp_summary.index
-        summaries.append(corp_summary.reset_index(drop=True))
-
-    return summaries
-
-
-def create_document_type_chart(df, marketing_type, chart_type='bar'):
-    """Create document type distribution chart"""
-    if df.empty:
-        return go.Figure()
-
-    doc_counts = df['Document_Type'].value_counts().head(15)
-
-    if chart_type == 'pie':
-        fig = px.pie(
-            values=doc_counts.values,
-            names=doc_counts.index,
-            title=f"{marketing_type} - Document Type Distribution"
-        )
-    else:
-        fig = px.bar(
-            x=doc_counts.values,
-            y=doc_counts.index,
-            orientation='h',
-            title=f"{marketing_type} - Top Document Types",
-            labels={'x': 'Count', 'y': 'Document Type'}
-        )
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-
+    fig = px.line(monthly_data, x='Date', y='Submissions',
+                  title=f"{title} - Monthly Submissions",
+                  markers=True)
     fig.update_layout(height=400)
-    return fig
+    st.plotly_chart(fig, use_container_width=True)
 
 
-def create_quarterly_trend_chart(summaries):
-    """Create quarterly trends comparison chart"""
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Projects by Quarter', 'Pages/Minutes by Quarter',
-                        'Document Types by Quarter', 'Workflow Metrics'),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-               [{"secondary_y": False}, {"secondary_y": False}]]
-    )
+def create_document_type_charts(data, title):
+    """Create document type visualization"""
+    if data.empty:
+        st.write("No data available for document types")
+        return
 
-    colors = {'3rd Party': '#1f77b4', 'Corporate': '#ff7f0e'}
+    doc_counts = data['Document_Type'].value_counts()
 
-    for summary in summaries:
-        if summary.empty:
-            continue
+    col1, col2 = st.columns(2)
 
-        marketing_type = summary['Marketing_Type'].iloc[0]
-        color = colors.get(marketing_type, '#2ca02c')
+    with col1:
+        # Pie chart
+        fig_pie = px.pie(values=doc_counts.values, names=doc_counts.index,
+                         title=f"{title} - Document Types (Pie Chart)")
+        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-        # Projects trend
-        fig.add_trace(
-            go.Scatter(x=summary['Quarter'], y=summary['Projects'],
-                       mode='lines+markers', name=f'{marketing_type} Projects',
-                       line=dict(color=color), marker=dict(size=8)),
-            row=1, col=1
-        )
-
-        # Pages/Minutes trend
-        pages_col = 'Total_Pages_Minutes' if marketing_type == '3rd Party' else 'Total_Pages'
-        if pages_col in summary.columns:
-            fig.add_trace(
-                go.Scatter(x=summary['Quarter'], y=summary[pages_col],
-                           mode='lines+markers', name=f'{marketing_type} Pages/Min',
-                           line=dict(color=color, dash='dash'), marker=dict(size=8)),
-                row=1, col=2
-            )
-
-        # Document types trend
-        fig.add_trace(
-            go.Scatter(x=summary['Quarter'], y=summary['Unique_Doc_Types'],
-                       mode='lines+markers', name=f'{marketing_type} Doc Types',
-                       line=dict(color=color, dash='dot'), marker=dict(size=8)),
-            row=2, col=1
-        )
-
-        # Workflow metrics (Corporate only)
-        if marketing_type == 'Corporate' and 'Avg_Days_To_Compliance' in summary.columns:
-            fig.add_trace(
-                go.Scatter(x=summary['Quarter'], y=summary['Avg_Days_To_Compliance'],
-                           mode='lines+markers', name='Avg Days to Compliance',
-                           line=dict(color='red'), marker=dict(size=8)),
-                row=2, col=2
-            )
-
-    fig.update_layout(height=600, showlegend=True)
-    return fig
+    with col2:
+        # Bar chart
+        fig_bar = px.bar(x=doc_counts.values, y=doc_counts.index,
+                         orientation='h',
+                         title=f"{title} - Document Types (Bar Chart)")
+        fig_bar.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_bar, use_container_width=True)
 
 
-def create_workflow_funnel(corporate_df):
-    """Create workflow stage funnel for Corporate marketing"""
-    if corporate_df.empty:
-        return go.Figure()
+def create_top_subadvisors_chart(data, title, top_n=10):
+    """Create top subadvisors chart for 3rd party data"""
+    if 'Subadvisor' not in data.columns or data.empty:
+        st.write("No subadvisor data available")
+        return
 
-    total_received = len(corporate_df[corporate_df['Date_Received'].notna()])
-    total_compliance = len(corporate_df[corporate_df['Date_Sent_Compliance'].notna()])
+    # Get top subadvisors by submission count
+    top_subs = data['Subadvisor'].value_counts().head(top_n)
 
-    fig = go.Figure(go.Funnel(
-        y=["Received", "Sent to Compliance"],
-        x=[total_received, total_compliance],
-        textinfo="value+percent initial",
-        marker=dict(color=["lightblue", "lightgreen"])
-    ))
+    # Create quarterly breakdown for top subadvisors
+    quarterly_data = data[data['Subadvisor'].isin(top_subs.index)].groupby(
+        ['Subadvisor', 'Year_Quarter']).size().reset_index(name='Submissions')
 
-    fig.update_layout(
-        title="Corporate Marketing Workflow Funnel",
-        height=400
-    )
+    fig = px.bar(quarterly_data, x='Year_Quarter', y='Submissions',
+                 color='Subadvisor',
+                 title=f"{title} - Top {top_n} Subadvisors by Quarter")
+    fig.update_layout(height=500)
+    st.plotly_chart(fig, use_container_width=True)
 
-    return fig
+
+def create_pages_analysis(data, title):
+    """Create pages/minutes analysis"""
+    if data.empty:
+        st.write("No data available for pages analysis")
+        return
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Pages distribution
+        pages_data = data.dropna(subset=['Pages'])
+        if not pages_data.empty:
+            fig_pages = px.histogram(pages_data, x='Pages', nbins=20,
+                                     title=f"{title} - Pages Distribution")
+            st.plotly_chart(fig_pages, use_container_width=True)
+
+    with col2:
+        # Minutes distribution (if available)
+        minutes_data = data.dropna(subset=['Minutes'])
+        if not minutes_data.empty:
+            fig_minutes = px.histogram(minutes_data, x='Minutes', nbins=20,
+                                       title=f"{title} - Minutes Distribution")
+            st.plotly_chart(fig_minutes, use_container_width=True)
+        else:
+            st.write("No minutes data available")
+
+
+def create_rfi_specific_charts(rfi_data):
+    """Create RFI-specific charts"""
+    if rfi_data.empty:
+        st.write("No RFI data available")
+        return
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Current Relationship chart
+        rel_counts = rfi_data['Current_Relationship'].value_counts()
+        fig_rel = px.bar(x=rel_counts.values, y=rel_counts.index,
+                         orientation='h',
+                         title="RFI - Current Relationships")
+        fig_rel.update_layout(height=300, yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_rel, use_container_width=True)
+
+    with col2:
+        # Services Seeking chart
+        services_counts = rfi_data['Services_Seeking'].value_counts()
+        fig_services = px.bar(x=services_counts.values, y=services_counts.index,
+                              orientation='h',
+                              title="RFI - Services Seeking")
+        fig_services.update_layout(height=300, yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_services, use_container_width=True)
 
 
 def main():
-    st.markdown('<h1 class="main-header">📊 Marketing Compliance Dashboard</h1>', unsafe_allow_html=True)
+    st.title("📊 Compliance Marketing Dashboard")
+    st.markdown("---")
 
-    # Load data automatically
-    third_party_df, corporate_df = load_data()
+    # Load data
+    with st.spinner("Loading and processing data..."):
+        third_party, corporate, rfi = load_and_clean_data()
 
-    if not third_party_df.empty or not corporate_df.empty:
-        # Process data
-        third_party_processed, corporate_processed = process_data(third_party_df, corporate_df)
+    if third_party is None:
+        st.error("Failed to load data. Please check the file structure and try again.")
+        st.write("**Expected file structure:**")
+        st.write("- File name: `compliance_marketing_master.xlsx`")
+        st.write("- Sheet 1: '3rd Party Marketing' with at least 5 columns")
+        st.write("- Sheet 2: 'Corporate Marketing' with at least 4 columns")
+        st.write("- Sheet 3: 'RFI' with at least 6 columns")
+        return
 
-        # Sidebar filters
-        st.sidebar.header("🔍 Filters")
+    # Sidebar filters
+    st.sidebar.header("🔍 Filters")
 
-        # Add refresh button
-        if st.sidebar.button("🔄 Refresh Data"):
-            st.cache_data.clear()
-            st.rerun()
+    # Date range filter
+    all_data = pd.concat([third_party, corporate, rfi], ignore_index=True)
+    min_date = all_data['Date_Received'].min()
+    max_date = all_data['Date_Received'].max()
 
-        # Marketing type filter
-        marketing_types = []
-        if not third_party_processed.empty:
-            marketing_types.append('3rd Party')
-        if not corporate_processed.empty:
-            marketing_types.append('Corporate')
-        marketing_types.append('Both')
-
-        selected_marketing_type = st.sidebar.selectbox(
-            "Marketing Type",
-            options=marketing_types,
-            index=len(marketing_types) - 1  # Default to 'Both'
+    if pd.notna(min_date) and pd.notna(max_date):
+        date_range = st.sidebar.date_input(
+            "Select Date Range",
+            value=[min_date.date(), max_date.date()],
+            min_value=min_date.date(),
+            max_value=max_date.date()
         )
 
-        # Quarter filter
-        all_quarters = set()
-        if not third_party_processed.empty:
-            all_quarters.update(third_party_processed['Quarter'].unique())
-        if not corporate_processed.empty:
-            all_quarters.update(corporate_processed['Quarter'].unique())
-        all_quarters = sorted([q for q in all_quarters if q != 'Unknown'])
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            # Filter all datasets
+            mask_tp = (third_party['Date_Received'].dt.date >= start_date) & (
+                        third_party['Date_Received'].dt.date <= end_date)
+            mask_corp = (corporate['Date_Received'].dt.date >= start_date) & (
+                        corporate['Date_Received'].dt.date <= end_date)
+            mask_rfi = (rfi['Date_Received'].dt.date >= start_date) & (rfi['Date_Received'].dt.date <= end_date)
 
-        selected_quarters = st.sidebar.multiselect(
-            "Select Quarters",
-            options=all_quarters,
-            default=all_quarters
-        )
+            third_party = third_party[mask_tp]
+            corporate = corporate[mask_corp]
+            rfi = rfi[mask_rfi]
 
-        # Document type filter
-        all_doc_types = set()
-        if selected_marketing_type in ['3rd Party', 'Both'] and not third_party_processed.empty:
-            all_doc_types.update(third_party_processed['Document_Type'].unique())
-        if selected_marketing_type in ['Corporate', 'Both'] and not corporate_processed.empty:
-            all_doc_types.update(corporate_processed['Document_Type'].unique())
+    # Area selection
+    area_options = ['All Areas', '3rd Party Marketing', 'Corporate Marketing', 'RFI']
+    selected_area = st.sidebar.selectbox("Select Area", area_options)
 
-        selected_doc_types = st.sidebar.multiselect(
-            "Document Types",
-            options=sorted(list(all_doc_types)),
-            default=sorted(list(all_doc_types))
-        )
+    # Time grouping
+    time_grouping = st.sidebar.selectbox("Time Grouping", ['Monthly', 'Quarterly', 'Yearly'])
 
-        # Filter data based on selections
-        filtered_tp = third_party_processed[
-            (third_party_processed['Quarter'].isin(selected_quarters)) &
-            (third_party_processed['Document_Type'].isin(selected_doc_types))
-            ] if not third_party_processed.empty else pd.DataFrame()
+    # Main content area
+    if selected_area == 'All Areas':
+        st.header("📈 Overall Summary")
 
-        filtered_corp = corporate_processed[
-            (corporate_processed['Quarter'].isin(selected_quarters)) &
-            (corporate_processed['Document_Type'].isin(selected_doc_types))
-            ] if not corporate_processed.empty else pd.DataFrame()
-
-        # Create tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📊 Combined Overview",
-            "🏢 Corporate Deep Dive",
-            "🤝 3rd Party Analysis",
-            "📈 Quarterly Trends",
-            "📋 Detailed Data"
-        ])
+        # Create better layout for combined metrics
+        tab1, tab2, tab3 = st.tabs(["🏢 3rd Party Marketing", "🏢 Corporate Marketing", "📝 RFI"])
 
         with tab1:
-            st.header("Combined Marketing Overview")
-
-            # Key metrics
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                total_projects = len(filtered_tp) + len(filtered_corp)
-                st.metric("Total Projects", f"{total_projects:,}")
-
-            with col2:
-                tp_pages = filtered_tp['Pages_Minutes'].sum() if not filtered_tp.empty else 0
-                corp_pages = filtered_corp['Pages'].sum() if not filtered_corp.empty else 0
-                st.metric("Total Pages/Minutes", f"{(tp_pages + corp_pages):,.2f}")
-
-            with col3:
-                tp_docs = len(filtered_tp) if not filtered_tp.empty else 0
-                st.metric("3rd Party Projects", f"{tp_docs:,}")
-
-            with col4:
-                corp_docs = len(filtered_corp) if not filtered_corp.empty else 0
-                st.metric("Corporate Projects", f"{corp_docs:,}")
-
-            # Side-by-side document type distributions
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if not filtered_tp.empty and selected_marketing_type in ['3rd Party', 'Both']:
-                    tp_chart = create_document_type_chart(filtered_tp, '3rd Party', 'bar')
-                    st.plotly_chart(tp_chart, use_container_width=True, key="overview_tp_chart")
-                else:
-                    st.info("No 3rd Party data to display")
-
-            with col2:
-                if not filtered_corp.empty and selected_marketing_type in ['Corporate', 'Both']:
-                    corp_chart = create_document_type_chart(filtered_corp, 'Corporate', 'bar')
-                    st.plotly_chart(corp_chart, use_container_width=True, key="overview_corp_chart")
-                else:
-                    st.info("No Corporate data to display")
-
-            # Combined quarterly comparison
-            if selected_marketing_type == 'Both':
-                summaries = create_quarterly_summary(filtered_tp, filtered_corp)
-                if summaries:
-                    quarterly_chart = create_quarterly_trend_chart(summaries)
-                    st.plotly_chart(quarterly_chart, use_container_width=True, key="overview_quarterly_chart")
+            create_summary_metrics(third_party, "3rd Party")
 
         with tab2:
-            st.header("Corporate Marketing Deep Dive")
-
-            if not filtered_corp.empty:
-                # Workflow funnel
-                col1, col2 = st.columns([2, 1])
-
-                with col1:
-                    funnel_chart = create_workflow_funnel(filtered_corp)
-                    st.plotly_chart(funnel_chart, use_container_width=True, key="corp_funnel_chart")
-
-                with col2:
-                    # Workflow metrics
-                    avg_to_compliance = filtered_corp['Days_To_Compliance'].mean()
-                    completion_rate = len(filtered_corp[filtered_corp['Date_Sent_Compliance'].notna()]) / len(
-                        filtered_corp) * 100 if len(filtered_corp) > 0 else 0
-
-                    st.metric("Avg Days to Compliance",
-                              f"{avg_to_compliance:.1f}" if not pd.isna(avg_to_compliance) else "N/A")
-                    st.metric("Completion Rate", f"{completion_rate:.1f}%")
-
-                # Document type analysis
-                st.subheader("Document Type Analysis")
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    doc_bar = create_document_type_chart(filtered_corp, 'Corporate', 'bar')
-                    st.plotly_chart(doc_bar, use_container_width=True, key="corp_doc_bar_chart")
-
-                with col2:
-                    doc_pie = create_document_type_chart(filtered_corp, 'Corporate', 'pie')
-                    st.plotly_chart(doc_pie, use_container_width=True, key="corp_doc_pie_chart")
-
-                # Quarterly trends
-                st.subheader("Corporate Quarterly Trends")
-                corp_quarterly = filtered_corp.groupby('Quarter').agg({
-                    'Project_Name': 'count',
-                    'Pages': 'sum',
-                    'Days_To_Compliance': 'mean'
-                }).round(2)
-
-                st.dataframe(corp_quarterly, use_container_width=True)
-
-            else:
-                st.info("No Corporate marketing data available for selected filters")
+            create_summary_metrics(corporate, "Corporate")
 
         with tab3:
-            st.header("3rd Party Marketing Analysis")
+            create_summary_metrics(rfi, "RFI")
 
-            if not filtered_tp.empty:
-                # Key metrics
-                col1, col2, col3 = st.columns(3)
+        st.markdown("---")
 
-                with col1:
-                    st.metric("Total Projects", f"{len(filtered_tp):,}")
+        # Add a summary table view
+        st.subheader("📊 Quick Comparison")
 
-                with col2:
-                    total_pages_minutes = filtered_tp['Pages_Minutes'].sum()
-                    st.metric("Total Pages/Minutes", f"{total_pages_minutes:,.2f}")
+        summary_data = {
+            'Area': ['3rd Party Marketing', 'Corporate Marketing', 'RFI'],
+            'Submissions': [len(third_party), len(corporate), len(rfi)],
+            'Total Pages': [
+                int(third_party['Pages'].sum()) if not pd.isna(third_party['Pages'].sum()) else 0,
+                int(corporate['Pages'].sum()) if not pd.isna(corporate['Pages'].sum()) else 0,
+                int(rfi['Pages'].sum()) if not pd.isna(rfi['Pages'].sum()) else 0
+            ],
+            'Avg Pages': [
+                round(third_party['Pages'].mean(), 1) if not pd.isna(third_party['Pages'].mean()) else 0,
+                round(corporate['Pages'].mean(), 1) if not pd.isna(corporate['Pages'].mean()) else 0,
+                round(rfi['Pages'].mean(), 1) if not pd.isna(rfi['Pages'].mean()) else 0
+            ]
+        }
 
-                with col3:
-                    avg_pages_minutes = filtered_tp['Pages_Minutes'].mean()
-                    st.metric("Avg Pages/Minutes",
-                              f"{avg_pages_minutes:.2f}" if not pd.isna(avg_pages_minutes) else "N/A")
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-                # Document type distribution
-                col1, col2 = st.columns(2)
+        st.markdown("---")
 
-                with col1:
-                    tp_bar = create_document_type_chart(filtered_tp, '3rd Party', 'bar')
-                    st.plotly_chart(tp_bar, use_container_width=True, key="tp_doc_bar_chart")
+        # Combined timeline
+        st.subheader("📅 Submission Timeline Comparison")
+        combined_timeline_data = []
 
-                with col2:
-                    # Pages/Minutes distribution
-                    if not filtered_tp.empty:
-                        fig = px.histogram(
-                            filtered_tp[filtered_tp['Pages_Minutes'] > 0],
-                            x='Pages_Minutes',
-                            title='Distribution of Pages/Minutes',
-                            nbins=20
-                        )
-                        st.plotly_chart(fig, use_container_width=True, key="tp_pages_histogram")
+        for area, data in [("3rd Party", third_party), ("Corporate", corporate), ("RFI", rfi)]:
+            monthly_counts = data.groupby('Year_Month').size().reset_index(name='Submissions')
+            monthly_counts['Area'] = area
+            monthly_counts['Date'] = pd.to_datetime(monthly_counts['Year_Month'])
+            combined_timeline_data.append(monthly_counts)
 
-                # Quarterly summary
-                st.subheader("3rd Party Quarterly Summary")
-                tp_quarterly = filtered_tp.groupby('Quarter').agg({
-                    'Project_Name': 'count',
-                    'Pages_Minutes': ['sum', 'mean'],
-                    'Document_Type': 'nunique'
-                }).round(2)
+        if combined_timeline_data:
+            combined_df = pd.concat(combined_timeline_data, ignore_index=True)
+            fig_combined = px.line(combined_df, x='Date', y='Submissions',
+                                   color='Area', markers=True,
+                                   title="Monthly Submissions by Area")
+            fig_combined.update_layout(height=500)
+            st.plotly_chart(fig_combined, use_container_width=True)
 
-                tp_quarterly.columns = ['Projects', 'Total_Pages_Minutes', 'Avg_Pages_Minutes', 'Unique_Doc_Types']
-                st.dataframe(tp_quarterly, use_container_width=True)
+    elif selected_area == '3rd Party Marketing':
+        st.header("🏢 3rd Party Marketing Analysis")
+        create_summary_metrics(third_party, "3rd Party Marketing")
 
-            else:
-                st.info("No 3rd Party marketing data available for selected filters")
+        st.markdown("---")
 
-        with tab4:
-            st.header("Quarterly Trends & Comparisons")
+        # Top subadvisors
+        st.subheader("🏆 Top Subadvisors")
+        create_top_subadvisors_chart(third_party, "3rd Party Marketing")
 
-            # Create quarterly summaries
-            summaries = create_quarterly_summary(filtered_tp, filtered_corp)
+        # Document types
+        st.subheader("📄 Document Types")
+        create_document_type_charts(third_party, "3rd Party Marketing")
 
-            if summaries:
-                # Combined trends chart
-                quarterly_chart = create_quarterly_trend_chart(summaries)
-                st.plotly_chart(quarterly_chart, use_container_width=True, key="trends_quarterly_chart")
+        # Timeline
+        st.subheader("📅 Submission Timeline")
+        create_submission_timeline(third_party, "3rd Party Marketing")
 
-                # Summary tables
-                for i, summary in enumerate(summaries):
-                    if not summary.empty:
-                        marketing_type = summary['Marketing_Type'].iloc[0]
-                        st.subheader(f"{marketing_type} Quarterly Summary")
-                        st.dataframe(summary.drop('Marketing_Type', axis=1), use_container_width=True)
+        # Pages/Minutes analysis
+        st.subheader("📊 Pages & Minutes Analysis")
+        create_pages_analysis(third_party, "3rd Party Marketing")
 
-            else:
-                st.info("No data available for quarterly analysis")
+    elif selected_area == 'Corporate Marketing':
+        st.header("🏢 Corporate Marketing Analysis")
+        create_summary_metrics(corporate, "Corporate Marketing")
 
-        with tab5:
-            st.header("Detailed Data View")
+        st.markdown("---")
 
-            # Data type selector
-            data_view = st.selectbox(
-                "Select Data View",
-                options=['3rd Party Marketing', 'Corporate Marketing', 'Combined']
-            )
+        # Document types
+        st.subheader("📄 Document Types")
+        create_document_type_charts(corporate, "Corporate Marketing")
 
-            if data_view == '3rd Party Marketing' and not filtered_tp.empty:
-                st.subheader("3rd Party Marketing Details")
+        # Timeline
+        st.subheader("📅 Submission Timeline")
+        create_submission_timeline(corporate, "Corporate Marketing")
 
-                # Search functionality
-                search_term = st.text_input("Search project names...")
-                if search_term:
-                    display_data = filtered_tp[
-                        filtered_tp['Project_Name'].str.contains(search_term, case=False, na=False)
-                    ]
-                else:
-                    display_data = filtered_tp
+        # Pages analysis
+        st.subheader("📊 Pages Analysis")
+        create_pages_analysis(corporate, "Corporate Marketing")
 
-                # Select columns to display
-                columns_to_show = ['Project_Name', 'Document_Type', 'Date_Received', 'Quarter', 'Pages_Minutes']
-                st.dataframe(display_data[columns_to_show], use_container_width=True)
+    elif selected_area == 'RFI':
+        st.header("📝 RFI Analysis")
+        create_summary_metrics(rfi, "RFI")
 
-                # Download option
-                csv = display_data.to_csv(index=False)
-                st.download_button(
-                    label="Download 3rd Party data as CSV",
-                    data=csv,
-                    file_name="third_party_marketing_data.csv",
-                    mime="text/csv"
-                )
+        st.markdown("---")
 
-            elif data_view == 'Corporate Marketing' and not filtered_corp.empty:
-                st.subheader("Corporate Marketing Details")
+        # Document types
+        st.subheader("📄 Document Types")
+        create_document_type_charts(rfi, "RFI")
 
-                # Search functionality
-                search_term = st.text_input("Search project names...")
-                if search_term:
-                    display_data = filtered_corp[
-                        filtered_corp['Project_Name'].str.contains(search_term, case=False, na=False)
-                    ]
-                else:
-                    display_data = filtered_corp
+        # RFI-specific charts
+        st.subheader("🔍 RFI-Specific Analysis")
+        create_rfi_specific_charts(rfi)
 
-                # Select columns to display
-                columns_to_show = ['Project_Name', 'Document_Type', 'Date_Received', 'Quarter',
-                                   'Pages', 'Date_Sent_Compliance', 'Days_To_Compliance']
-                st.dataframe(display_data[columns_to_show], use_container_width=True)
+        # Timeline
+        st.subheader("📅 Submission Timeline")
+        create_submission_timeline(rfi, "RFI")
 
-                # Download option
-                csv = display_data.to_csv(index=False)
-                st.download_button(
-                    label="Download Corporate data as CSV",
-                    data=csv,
-                    file_name="corporate_marketing_data.csv",
-                    mime="text/csv"
-                )
+        # Pages analysis
+        st.subheader("📊 Pages Analysis")
+        create_pages_analysis(rfi, "RFI")
 
-            elif data_view == 'Combined':
-                # Combine datasets for display
-                combined_data = []
-
-                if not filtered_tp.empty:
-                    tp_display = filtered_tp[
-                        ['Project_Name', 'Document_Type', 'Date_Received', 'Quarter', 'Marketing_Type']].copy()
-                    tp_display['Pages'] = filtered_tp['Pages_Minutes']
-                    combined_data.append(tp_display)
-
-                if not filtered_corp.empty:
-                    corp_display = filtered_corp[
-                        ['Project_Name', 'Document_Type', 'Date_Received', 'Quarter', 'Marketing_Type', 'Pages']].copy()
-                    combined_data.append(corp_display)
-
-                if combined_data:
-                    combined_df = pd.concat(combined_data, ignore_index=True)
-
-                    # Search functionality
-                    search_term = st.text_input("Search project names...")
-                    if search_term:
-                        combined_df = combined_df[
-                            combined_df['Project_Name'].str.contains(search_term, case=False, na=False)
-                        ]
-
-                    st.dataframe(combined_df, use_container_width=True)
-
-                    # Download option
-                    csv = combined_df.to_csv(index=False)
-                    st.download_button(
-                        label="Download combined data as CSV",
-                        data=csv,
-                        file_name="combined_marketing_data.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.info("No data available")
-
-            else:
-                st.info("No data available for the selected view")
-
-    else:
-        st.error(
-            "Could not load data. Please ensure 'compliance_marketing_master.xlsx' is in the same directory as app.py")
+    # Raw data view (optional)
+    with st.expander("🔍 View Raw Data"):
+        if selected_area == '3rd Party Marketing':
+            st.dataframe(third_party)
+        elif selected_area == 'Corporate Marketing':
+            st.dataframe(corporate)
+        elif selected_area == 'RFI':
+            st.dataframe(rfi)
+        else:
+            tab1, tab2, tab3 = st.tabs(["3rd Party", "Corporate", "RFI"])
+            with tab1:
+                st.dataframe(third_party)
+            with tab2:
+                st.dataframe(corporate)
+            with tab3:
+                st.dataframe(rfi)
 
 
 if __name__ == "__main__":
