@@ -335,13 +335,26 @@ def create_submission_timeline(data, title, time_grouping='Monthly'):
     
     # Fix x-axis ticks for yearly view to show only whole years
     if time_grouping == 'Yearly':
-        # Get the actual years from the data
-        years = sorted([int(year) for year in grouped_data['Period'].unique()])
-        fig.update_xaxes(
-            tickmode='array',
-            tickvals=years,
-            ticktext=[str(year) for year in years]
-        )
+        # Get the actual years from the data, filtering out any non-numeric values
+        try:
+            years = []
+            for year in grouped_data['Period'].unique():
+                try:
+                    if pd.notna(year) and str(year).strip():  # Check for valid, non-empty values
+                        years.append(int(float(str(year))))  # Convert via float first to handle edge cases
+                except (ValueError, TypeError):
+                    continue  # Skip any values that can't be converted to integers
+            
+            if years:  # Only update if we have valid years
+                years = sorted(years)
+                fig.update_xaxes(
+                    tickmode='array',
+                    tickvals=years,
+                    ticktext=[str(year) for year in years]
+                )
+        except Exception as e:
+            # If there's any error, just skip the tick formatting
+            pass
     
     st.plotly_chart(fig, use_container_width=True)
 
@@ -483,12 +496,24 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
     
     # Fix x-axis ticks for yearly view to show only whole years
     if time_grouping == 'Yearly':
-        years = sorted([int(year) for year in grouped_pages['Period'].unique()])
-        fig.update_xaxes(
-            tickmode='array',
-            tickvals=years,
-            ticktext=[str(year) for year in years]
-        )
+        try:
+            years = []
+            for year in grouped_pages['Period'].unique():
+                try:
+                    if pd.notna(year) and str(year).strip():
+                        years.append(int(float(str(year))))
+                except (ValueError, TypeError):
+                    continue
+            
+            if years:
+                years = sorted(years)
+                fig.update_xaxes(
+                    tickmode='array',
+                    tickvals=years,
+                    ticktext=[str(year) for year in years]
+                )
+        except Exception:
+            pass
     
     st.plotly_chart(fig, use_container_width=True)
     
@@ -519,12 +544,24 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
             
             # Fix x-axis ticks for yearly minutes chart
             if time_grouping == 'Yearly':
-                years = sorted([int(year) for year in grouped_minutes['Period'].unique()])
-                fig_minutes.update_xaxes(
-                    tickmode='array',
-                    tickvals=years,
-                    ticktext=[str(year) for year in years]
-                )
+                try:
+                    years = []
+                    for year in grouped_minutes['Period'].unique():
+                        try:
+                            if pd.notna(year) and str(year).strip():
+                                years.append(int(float(str(year))))
+                        except (ValueError, TypeError):
+                            continue
+                    
+                    if years:
+                        years = sorted(years)
+                        fig_minutes.update_xaxes(
+                            tickmode='array',
+                            tickvals=years,
+                            ticktext=[str(year) for year in years]
+                        )
+                except Exception:
+                    pass
             
             st.plotly_chart(fig_minutes, use_container_width=True)
 
@@ -726,12 +763,24 @@ def main():
             
             # Fix x-axis ticks for yearly view in combined chart
             if time_grouping == 'Yearly':
-                years = sorted([int(year) for year in combined_df['Period'].unique()])
-                fig_combined.update_xaxes(
-                    tickmode='array',
-                    tickvals=years,
-                    ticktext=[str(year) for year in years]
-                )
+                try:
+                    years = []
+                    for year in combined_df['Period'].unique():
+                        try:
+                            if pd.notna(year) and str(year).strip():
+                                years.append(int(float(str(year))))
+                        except (ValueError, TypeError):
+                            continue
+                    
+                    if years:
+                        years = sorted(years)
+                        fig_combined.update_xaxes(
+                            tickmode='array',
+                            tickvals=years,
+                            ticktext=[str(year) for year in years]
+                        )
+                except Exception:
+                    pass
             
             st.plotly_chart(fig_combined, use_container_width=True)
             
