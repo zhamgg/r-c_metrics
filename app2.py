@@ -320,7 +320,7 @@ def create_submission_timeline(data, title, time_grouping='Monthly'):
     
     # Adjust bar gaps based on time grouping (fewer periods = need bigger gaps to keep bars reasonable width)
     if time_grouping == 'Yearly':
-        bargap_value = 0.5  # Bigger gaps for yearly (fewer bars)
+        bargap_value = 0.7  # Much bigger gaps for yearly (fewer bars)
     elif time_grouping == 'Quarterly':
         bargap_value = 0.3  # Medium gaps for quarterly
     else:  # Monthly
@@ -458,7 +458,7 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
     
     # Adjust bar gaps based on time grouping
     if time_grouping == 'Yearly':
-        bargap_value = 0.5  # Bigger gaps for yearly
+        bargap_value = 0.7  # Much bigger gaps for yearly
     elif time_grouping == 'Quarterly':
         bargap_value = 0.3  # Medium gaps for quarterly
     else:  # Monthly
@@ -678,8 +678,8 @@ def main():
             
             # Adjust gaps based on time grouping for consistent bar width
             if time_grouping == 'Yearly':
-                bargap_value = 0.4  # Bigger gaps for yearly
-                bargroupgap_value = 0.1
+                bargap_value = 0.6  # Much bigger gaps for yearly
+                bargroupgap_value = 0.15
             elif time_grouping == 'Quarterly':
                 bargap_value = 0.25  # Medium gaps for quarterly
                 bargroupgap_value = 0.05
