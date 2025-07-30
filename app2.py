@@ -314,16 +314,23 @@ def create_submission_timeline(data, title, time_grouping='Monthly'):
     if future_records > 0:
         st.warning(f"⚠️ Filtered out {future_records} records with future dates")
     
-    # Create bar chart with wider bars
+    # Create bar chart with width adjusted based on time grouping
     fig = px.bar(grouped_data, x='Period', y='Submissions', 
                  title=f"{title} - {time_grouping} Submissions (Historical Data Only)")
     
-    # Make bars wider by reducing gaps
+    # Adjust bar gaps based on time grouping (fewer periods = need bigger gaps to keep bars reasonable width)
+    if time_grouping == 'Yearly':
+        bargap_value = 0.5  # Bigger gaps for yearly (fewer bars)
+    elif time_grouping == 'Quarterly':
+        bargap_value = 0.3  # Medium gaps for quarterly
+    else:  # Monthly
+        bargap_value = 0.15  # Smaller gaps for monthly (more bars)
+    
     fig.update_layout(
         height=400, 
         xaxis_title=x_label, 
         yaxis_title='Number of Submissions',
-        bargap=0.15  # Smaller gap = wider bars
+        bargap=bargap_value
     )
     
     st.plotly_chart(fig, use_container_width=True)
@@ -445,16 +452,23 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
         grouped_pages['Period'] = grouped_pages['Year_Month']
         x_label = 'Month'
     
-    # Create bar chart with wider bars
+    # Create bar chart with width adjusted based on time grouping
     fig = px.bar(grouped_pages, x='Period', y='Pages', 
                  title=f"{title} - {time_grouping} Page Count")
     
-    # Make bars wider by reducing gaps
+    # Adjust bar gaps based on time grouping
+    if time_grouping == 'Yearly':
+        bargap_value = 0.5  # Bigger gaps for yearly
+    elif time_grouping == 'Quarterly':
+        bargap_value = 0.3  # Medium gaps for quarterly
+    else:  # Monthly
+        bargap_value = 0.15  # Smaller gaps for monthly
+    
     fig.update_layout(
         height=400, 
         xaxis_title=x_label, 
         yaxis_title='Total Pages',
-        bargap=0.15
+        bargap=bargap_value
     )
     
     st.plotly_chart(fig, use_container_width=True)
@@ -476,12 +490,12 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
             fig_minutes = px.bar(grouped_minutes, x='Period', y='Minutes', 
                                title=f"{title} - {time_grouping} Minutes Count")
             
-            # Make bars wider by reducing gaps
+            # Use same gap logic for minutes
             fig_minutes.update_layout(
                 height=400, 
                 xaxis_title=x_label, 
                 yaxis_title='Total Minutes',
-                bargap=0.15
+                bargap=bargap_value
             )
             st.plotly_chart(fig_minutes, use_container_width=True)
 
@@ -656,19 +670,29 @@ def main():
         if combined_timeline_data:
             combined_df = pd.concat(combined_timeline_data, ignore_index=True)
             
-            # Create grouped bar chart with color coding and medium-width bars
+            # Create grouped bar chart with color coding and responsive bar width
             fig_combined = px.bar(combined_df, x='Period', y='Submissions', 
                                  color='Area', 
                                  title=f"{time_grouping} Submissions by Area (Historical Data Only)",
                                  barmode='group')
             
-            # Make bars wider using different approach
+            # Adjust gaps based on time grouping for consistent bar width
+            if time_grouping == 'Yearly':
+                bargap_value = 0.4  # Bigger gaps for yearly
+                bargroupgap_value = 0.1
+            elif time_grouping == 'Quarterly':
+                bargap_value = 0.25  # Medium gaps for quarterly
+                bargroupgap_value = 0.05
+            else:  # Monthly
+                bargap_value = 0.15  # Smaller gaps for monthly
+                bargroupgap_value = 0.02
+            
             fig_combined.update_layout(
                 height=500,
                 xaxis_title=time_grouping.replace('ly', ''),
                 yaxis_title='Number of Submissions',
-                bargap=0.15,  # Smaller gap between groups = wider bars
-                bargroupgap=0.02  # Very small gap between bars in same group
+                bargap=bargap_value,
+                bargroupgap=bargroupgap_value
             )
             st.plotly_chart(fig_combined, use_container_width=True)
             
