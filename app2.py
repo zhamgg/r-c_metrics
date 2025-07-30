@@ -333,6 +333,16 @@ def create_submission_timeline(data, title, time_grouping='Monthly'):
         bargap=bargap_value
     )
     
+    # Fix x-axis ticks for yearly view to show only whole years
+    if time_grouping == 'Yearly':
+        # Get the actual years from the data
+        years = sorted([int(year) for year in grouped_data['Period'].unique()])
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=years,
+            ticktext=[str(year) for year in years]
+        )
+    
     st.plotly_chart(fig, use_container_width=True)
 
 def create_document_type_charts(data, title):
@@ -471,6 +481,15 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
         bargap=bargap_value
     )
     
+    # Fix x-axis ticks for yearly view to show only whole years
+    if time_grouping == 'Yearly':
+        years = sorted([int(year) for year in grouped_pages['Period'].unique()])
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=years,
+            ticktext=[str(year) for year in years]
+        )
+    
     st.plotly_chart(fig, use_container_width=True)
     
     # Show minutes separately if available
@@ -497,6 +516,16 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
                 yaxis_title='Total Minutes',
                 bargap=bargap_value
             )
+            
+            # Fix x-axis ticks for yearly minutes chart
+            if time_grouping == 'Yearly':
+                years = sorted([int(year) for year in grouped_minutes['Period'].unique()])
+                fig_minutes.update_xaxes(
+                    tickmode='array',
+                    tickvals=years,
+                    ticktext=[str(year) for year in years]
+                )
+            
             st.plotly_chart(fig_minutes, use_container_width=True)
 
 def create_rfi_specific_charts(rfi_data):
@@ -694,6 +723,16 @@ def main():
                 bargap=bargap_value,
                 bargroupgap=bargroupgap_value
             )
+            
+            # Fix x-axis ticks for yearly view in combined chart
+            if time_grouping == 'Yearly':
+                years = sorted([int(year) for year in combined_df['Period'].unique()])
+                fig_combined.update_xaxes(
+                    tickmode='array',
+                    tickvals=years,
+                    ticktext=[str(year) for year in years]
+                )
+            
             st.plotly_chart(fig_combined, use_container_width=True)
             
             # Add data quality notes
