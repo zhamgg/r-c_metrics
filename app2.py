@@ -314,10 +314,18 @@ def create_submission_timeline(data, title, time_grouping='Monthly'):
     if future_records > 0:
         st.warning(f"⚠️ Filtered out {future_records} records with future dates")
     
-    # Create bar chart instead of line chart
+    # Create bar chart with thinner bars
     fig = px.bar(grouped_data, x='Period', y='Submissions', 
                  title=f"{title} - {time_grouping} Submissions (Historical Data Only)")
-    fig.update_layout(height=400, xaxis_title=x_label, yaxis_title='Number of Submissions')
+    
+    # Make bars thinner
+    fig.update_traces(width=0.6)  # Adjust bar width (0.6 = 60% of available space)
+    fig.update_layout(
+        height=400, 
+        xaxis_title=x_label, 
+        yaxis_title='Number of Submissions',
+        bargap=0.4  # Add gap between bars
+    )
     
     st.plotly_chart(fig, use_container_width=True)
 
@@ -438,10 +446,18 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
         grouped_pages['Period'] = grouped_pages['Year_Month']
         x_label = 'Month'
     
-    # Create bar chart
+    # Create bar chart with thinner bars
     fig = px.bar(grouped_pages, x='Period', y='Pages', 
                  title=f"{title} - {time_grouping} Page Count")
-    fig.update_layout(height=400, xaxis_title=x_label, yaxis_title='Total Pages')
+    
+    # Make bars thinner
+    fig.update_traces(width=0.6)
+    fig.update_layout(
+        height=400, 
+        xaxis_title=x_label, 
+        yaxis_title='Total Pages',
+        bargap=0.4
+    )
     
     st.plotly_chart(fig, use_container_width=True)
     
@@ -461,7 +477,15 @@ def create_pages_analysis(data, title, time_grouping='Monthly'):
             
             fig_minutes = px.bar(grouped_minutes, x='Period', y='Minutes', 
                                title=f"{title} - {time_grouping} Minutes Count")
-            fig_minutes.update_layout(height=400, xaxis_title=x_label, yaxis_title='Total Minutes')
+            
+            # Make bars thinner
+            fig_minutes.update_traces(width=0.6)
+            fig_minutes.update_layout(
+                height=400, 
+                xaxis_title=x_label, 
+                yaxis_title='Total Minutes',
+                bargap=0.4
+            )
             st.plotly_chart(fig_minutes, use_container_width=True)
 
 def create_rfi_specific_charts(rfi_data):
@@ -630,16 +654,20 @@ def main():
         if combined_timeline_data:
             combined_df = pd.concat(combined_timeline_data, ignore_index=True)
             
-            # Create grouped bar chart with color coding
+            # Create grouped bar chart with color coding and thinner bars
             fig_combined = px.bar(combined_df, x='Period', y='Submissions', 
                                  color='Area', 
                                  title=f"{time_grouping} Submissions by Area (Historical Data Only)",
                                  barmode='group')
             
+            # Make bars thinner
+            fig_combined.update_traces(width=0.6)
             fig_combined.update_layout(
                 height=500,
                 xaxis_title=time_grouping.replace('ly', ''),
-                yaxis_title='Number of Submissions'
+                yaxis_title='Number of Submissions',
+                bargap=0.3,  # Gap between groups
+                bargroupgap=0.1  # Gap between bars in same group
             )
             st.plotly_chart(fig_combined, use_container_width=True)
             
